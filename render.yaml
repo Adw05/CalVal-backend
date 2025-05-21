@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: toyota-vehicle-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /models
+    envVars:
+      - key: PORT
+        value: 8080
