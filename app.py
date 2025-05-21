@@ -20,7 +20,21 @@ app = Flask(__name__)
 CORS(app)
 
 # Load model, scaler, encoder, and dataset
-model = pickle.load(open('model.pkl', 'rb'))
+try:
+    model = pickle.load(open('model.pkl', 'rb'))
+except Exception as e:
+    print(f"Error loading model: {str(e)}")
+    # Fallback for LightGBM compatibility issues
+    import lightgbm as lgb
+    # Try to load the model in a different way
+    with open('model.pkl', 'rb') as f:
+        model_dict = pickle.load(f)
+        if hasattr(model_dict, '_Booster'):
+            model = model_dict
+        else:
+            # If not a direct LightGBM model, try to reconstruct it
+            model = lgb.Booster(model_str=model_dict.model_str) if hasattr(model_dict, 'model_str') else model_dict
+
 scaler = pickle.load(open('scaler.pkl', 'rb'))
 encoder = pickle.load(open('encoder.pkl', 'rb'))
 data = pd.read_csv('data.csv.gz')  
