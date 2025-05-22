@@ -1,0 +1,10 @@
+runtime: python39
+instance_class: F1
+entrypoint: gunicorn -b :$PORT app:app
+
+env_variables:
+  FLASK_ENV: "production"
+
+handlers:
+- url: /.*
+  script: auto

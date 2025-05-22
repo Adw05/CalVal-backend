@@ -74,9 +74,14 @@ image_transforms = transforms.Compose([
 
 # --- Helper: Tabular price prediction ---
 def predict_price_range(model, scaler, encoder, data, model_name, year, mileage, future_year=None):
+    # Flag to track which prediction method was used (for debugging)
+    prediction_method = "unknown"
+    
     try:
+        print(f"Starting prediction for {model_name}, year: {year}, mileage: {mileage}")
         model_data = data[data['model'] == model_name].copy()
         if model_data.empty:
+            print(f"No data found for model: {model_name}")
             return None, None, None, f"No data found for model: {model_name}"
 
         # Add/update fields
@@ -95,24 +100,40 @@ def predict_price_range(model, scaler, encoder, data, model_name, year, mileage,
         numerical_cols = ['year', 'mileage', 'age', 'mileage_per_year', 'seats', 'cylinder']
 
         # Encode and scale
+        print("Encoding and scaling data...")
         model_data_encoded = encoder.transform(model_data[features])
         model_data_encoded[numerical_cols] = scaler.transform(model_data_encoded[numerical_cols])
+        print(f"Data prepared successfully. Model type: {type(model).__name__}")
 
         # Predict - try different methods to handle LightGBM compatibility issues
         try:
+            print("Attempting primary prediction method...")
             predictions_log = model.predict(model_data_encoded)
+            prediction_method = "primary"
+            print("Primary prediction successful")
         except AttributeError as e:
+            print(f"Primary prediction failed with error: {str(e)}")
             if "'Booster' object has no attribute 'handle'" in str(e):
                 # Fallback to a simpler prediction method
                 import lightgbm as lgb
+                print(f"LightGBM version: {lgb.__version__}")
+                
                 if hasattr(model, 'predict_proba'):
+                    print("Using predict_proba method")
                     predictions_log = model.predict_proba(model_data_encoded)[:, 1]
+                    prediction_method = "predict_proba"
                 elif hasattr(model, '_Booster'):
+                    print("Using _Booster.predict method")
                     predictions_log = model._Booster.predict(model_data_encoded)
+                    prediction_method = "_Booster"
                 elif hasattr(model, 'booster_'):
+                    print("Using booster_.predict method")
                     predictions_log = model.booster_.predict(model_data_encoded)
+                    prediction_method = "booster_"
                 else:
+                    print("All LightGBM methods failed, using fallback rule-based model")
                     # Last resort: use a simple linear regression as fallback
+                    prediction_method = "rule_based"
                     # This is just to provide some response rather than failing
                     base_price = 100000  # Default base price
                     age_factor = 0.93 ** (2025 - year)  # 7% depreciation per year
@@ -132,20 +153,28 @@ def predict_price_range(model, scaler, encoder, data, model_name, year, mileage,
                         upper_bound *= depreciation_factor
                         base_price *= depreciation_factor
                     
+                    print(f"Rule-based prediction: lower={lower_bound}, upper={upper_bound}")
                     return lower_bound, base_price, upper_bound, None
             else:
                 # Re-raise if it's not the specific error we're handling
                 raise
 
         # Continue with normal processing if we got predictions
+        print(f"Processing predictions using method: {prediction_method}")
         predictions_aed = np.expm1(predictions_log)
 
         lower_bound = np.percentile(predictions_aed, 5)
         upper_bound = np.percentile(predictions_aed, 95)
         base_price = np.mean(predictions_aed)
+        print(f"Prediction results: lower={lower_bound}, base={base_price}, upper={upper_bound}")
     except Exception as e:
         print(f"Error in predict_price_range: {str(e)}")
+        print(f"Exception type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        
         # Provide fallback values
+        prediction_method = "exception_fallback"
         base_price = 100000  # Default base price
         age_factor = 0.93 ** (2025 - year)  # 7% depreciation per year
         mileage_factor = 0.9 ** (mileage / 10000)  # 10% per 10k miles
@@ -156,6 +185,7 @@ def predict_price_range(model, scaler, encoder, data, model_name, year, mileage,
         lower_bound = base_price * age_factor * mileage_factor * luxury_factor * 0.8
         upper_bound = base_price * age_factor * mileage_factor * luxury_factor * 1.2
         base_price = base_price * age_factor * mileage_factor * luxury_factor
+        print(f"Using fallback prediction due to exception: lower={lower_bound}, upper={upper_bound}")
 
     if future_year:
         years_ahead = future_year - 2025
@@ -163,7 +193,9 @@ def predict_price_range(model, scaler, encoder, data, model_name, year, mileage,
         lower_bound *= depreciation_factor
         upper_bound *= depreciation_factor
         base_price *= depreciation_factor
+        print(f"Applied future year adjustment for {future_year}: lower={lower_bound}, upper={upper_bound}")
 
+    print(f"Final prediction (method: {prediction_method}): lower={lower_bound}, base={base_price}, upper={upper_bound}")
     return lower_bound, base_price, upper_bound, None
 
 # --- Helper: Predict class from image ---
